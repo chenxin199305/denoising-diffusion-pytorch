@@ -703,6 +703,10 @@ class GaussianDiffusion(Module):
         return ModelPrediction(pred_noise, x_start)
 
     def p_mean_variance(self, x, t, x_self_cond=None, clip_denoised=True):
+        """
+        This method computes the mean and variance
+        of the posterior distribution ( q(x_{t-1} | x_t, x_0) ) in the diffusion process.
+        """
         preds = self.model_predictions(x, t, x_self_cond)
         x_start = preds.pred_x_start
 
@@ -714,6 +718,11 @@ class GaussianDiffusion(Module):
 
     @torch.inference_mode()
     def p_sample(self, x, t: int, x_self_cond=None):
+        """
+        这段代码是扩散模型采样过程中的一步，作用是根据当前时刻的噪声图像 (x) 和时间步 (t)，生成上一个时间步的图像。
+        
+        简而言之，这个函数实现了扩散模型采样过程中的单步反向扩散。
+        """
         b, *_, device = *x.shape, self.device
         batched_times = torch.full((b,), t, device=device, dtype=torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(x=x, t=batched_times, x_self_cond=x_self_cond, clip_denoised=True)
