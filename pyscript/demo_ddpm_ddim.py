@@ -61,7 +61,76 @@ class SimpleUNet(nn.Module):
     def __init__(self, image_channels=1, hidden_dims=[32, 64, 128], time_emb_dim=32):
         super().__init__()
 
+        """
+        Jason 2025-09-29:
+        各层维数变化示例（假设输入图像为64x64）：
+        
+        # 时间嵌入维度变化
+        输入: (batch_size, ) -> 输出: (batch_size, time_emb_dim)
+        
+        # 编码器维度变化
+        输入: (batch_size, image_channels, 64, 64)
+        Conv2d(1, 32) -> (batch_size, 32, 64, 64)  # 输入通道数为1（例如灰度图像），输出通道数为32（即使用32个不同的卷积核）
+        Conv2d(32, 32) -> (batch_size, 32, 64, 64)
+        Downsample -> (batch_size, 32, 32, 32)  # 下采样，空间尺寸减半
+        
+        # 第二个编码块
+        # 输入: (batch_size, 32, 32, 32)
+        Conv2d(32, 64) -> (batch_size, 64, 32, 32)
+        Conv2d(64, 64) -> (batch_size, 64, 32, 32)
+        Downsample -> (batch_size, 64, 16, 16)
+        
+        # 第三个编码块
+        # 输入: (batch_size, 64, 16, 16)
+        # Conv2d(64, 128) -> (batch_size, 128, 16, 16)
+        # Conv2d(128, 128) -> (batch_size, 128, 16, 16)
+        # Downsample -> (batch_size, 128, 8, 8)
+        
+        # 中间层
+        # 输入: (batch_size, 128, 8, 8)
+        # Conv2d(128, 128) -> (batch_size, 128, 8, 8)
+        # Conv2d(128, 128) -> (batch_size, 128, 8, 8)
+        
+        # 解码器维度变化
+        # 第一个解码块
+        # 输入: (batch_size, 128, 8, 8)
+        Upsample -> (batch_size, 128, 16, 16)  # 上采样，空间尺寸加倍，中间插入0值
+        # 拼接跳跃连接: (batch_size, 128 + 64, 16, 16) = (batch_size, 192, 16, 16)
+        Conv2d(192, 64) -> (batch_size, 64, 16, 16)
+        Conv2d(64, 64) -> (batch_size, 64, 16, 16)
+        
+        # 第二个解码块
+        # 输入: (batch_size, 64, 16, 16)
+        Upsample -> (batch_size, 64, 32, 32)
+        # 拼接跳跃连接: (batch_size, 64 + 32, 32, 32) = (batch_size, 96, 32, 32)
+        Conv2d(96, 32) -> (batch_size, 32, 32, 32)
+        Conv2d(32, 32) -> (batch_size, 32, 32, 32)
+        
+        # 最终输出层
+        Upsample -> (batch_size, 32, 64, 64)
+        # 拼接跳跃连接: (batch_size, 32 + 1, 64, 64) = (batch_size, 33, 64, 64)
+        Conv2d(33, 1) -> (batch_size, 1, 64, 64)  # 输出通道数为1，恢复到原始图像通道数
+
+        维数变化总结:
+        - 输入图像: (batch_size, 1, 64, 64)
+        - 编码器输出: (batch_size, 128, 8, 8)
+        - 中间层输出: (batch_size, 128, 8, 8)
+        - 解码器输出: (batch_size, 1, 64, 64)
+        - 时间嵌入: (batch_size, time_emb_dim)
+        - 跳跃连接: 在解码器中拼接对应编码器层的输出，增加通道数
+        - 下采样: 每次下采样空间尺寸减半
+        - 上采样: 每次上采样空间尺寸加倍
+        - 卷积层: 改变通道数，提取特征
+        - 激活函数: 增加非线性，帮助模型学习复杂映射
+        - 最终输出: 恢复到与输入图像相同的尺寸和通道数
+        """
+
         # 时间嵌入
+        """
+        使用正弦位置编码将离散时间步t转换为连续向量
+        这是扩散模型的关键组件，让网络知道当前处于去噪过程的哪个时间步
+        正弦编码能更好地处理不同时间步之间的相对关系
+        """
         self.time_mlp = nn.Sequential(
             SinusoidalPositionEmbeddings(time_emb_dim),
             nn.Linear(time_emb_dim, time_emb_dim),
@@ -74,13 +143,18 @@ class SimpleUNet(nn.Module):
 
         in_channels = image_channels
         for hidden_dim in hidden_dims:
-            self.encoder_blocks.append(nn.Sequential(
-                nn.Conv2d(in_channels, hidden_dim, 3, padding=1),
-                nn.ReLU(),
-                nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1),
-                nn.ReLU(),
-            ))
-            self.downsample.append(nn.Conv2d(hidden_dim, hidden_dim, 3, stride=2, padding=1))
+            self.encoder_blocks.append(
+                nn.Sequential(
+                    nn.Conv2d(in_channels, hidden_dim, 3, padding=1),
+                    nn.ReLU(),
+                    nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1),
+                    nn.ReLU(),
+                )
+            )
+            self.downsample.append(
+                # stride=2 实现下采样，输出尺寸为输入的一半
+                nn.Conv2d(hidden_dim, hidden_dim, 3, stride=2, padding=1)
+            )
             in_channels = hidden_dim
 
         # 中间层
@@ -96,13 +170,18 @@ class SimpleUNet(nn.Module):
         self.upsample = nn.ModuleList()
 
         for i in range(len(hidden_dims) - 1, 0, -1):
-            self.upsample.append(nn.ConvTranspose2d(hidden_dims[i], hidden_dims[i], 4, stride=2, padding=1))
-            self.decoder_blocks.append(nn.Sequential(
-                nn.Conv2d(hidden_dims[i] + hidden_dims[i - 1], hidden_dims[i - 1], 3, padding=1),
-                nn.ReLU(),
-                nn.Conv2d(hidden_dims[i - 1], hidden_dims[i - 1], 3, padding=1),
-                nn.ReLU(),
-            ))
+            self.upsample.append(
+                # stride=2 实现上采样，输出尺寸为输入的两倍
+                nn.ConvTranspose2d(hidden_dims[i], hidden_dims[i], 4, stride=2, padding=1)
+            )
+            self.decoder_blocks.append(
+                nn.Sequential(
+                    nn.Conv2d(hidden_dims[i] + hidden_dims[i - 1], hidden_dims[i - 1], 3, padding=1),
+                    nn.ReLU(),
+                    nn.Conv2d(hidden_dims[i - 1], hidden_dims[i - 1], 3, padding=1),
+                    nn.ReLU(),
+                )
+            )
 
         # 输出层
         self.final_upsample = nn.ConvTranspose2d(hidden_dims[0], hidden_dims[0], 4, stride=2, padding=1)
