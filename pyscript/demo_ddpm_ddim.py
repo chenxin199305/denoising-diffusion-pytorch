@@ -10,7 +10,12 @@ import matplotlib.pyplot as plt
 # ==================== 共享组件 ====================
 
 class SinusoidalPositionEmbeddings(nn.Module):
-    """时间步嵌入"""
+    """
+    时间步嵌入
+
+    类用于将时间步（如扩散模型中的 t）编码为高维向量，便于神经网络处理。
+    其核心思想是用正弦和余弦函数对时间步进行位置编码，类似于 Transformer 的位置编码。
+    """
 
     def __init__(self, dim):
         super().__init__()
