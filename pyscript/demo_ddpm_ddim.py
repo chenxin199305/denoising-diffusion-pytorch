@@ -216,7 +216,9 @@ class SimpleUNet(nn.Module):
 
 
 class DiffusionModel:
-    """扩散模型基类"""
+    """
+    扩散模型基类
+    """
 
     def __init__(self, timesteps=1000, beta_start=1e-4, beta_end=0.02, image_size=28, device="cuda"):
         self.timesteps = timesteps
